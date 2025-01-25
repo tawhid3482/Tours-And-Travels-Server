@@ -35,6 +35,7 @@ async function run() {
     const reviewsCollection = client.db("Traveling").collection("reviews");
     const galleryCollection = client.db("Traveling").collection("gallery");
     const orderCollection = client.db("Traveling").collection("order");
+    const paymentCollection = client.db("Traveling").collection("payment");
     // all query here
 
     // jwt api
@@ -276,8 +277,11 @@ async function run() {
       const result = await orderCollection.find(query).toArray();
       res.send(result);
     });
+    
     app.post('/payment',async(req,res)=>{
-      
+      const info = req.body;
+      const result = await paymentCollection.insertOne(info);
+      res.send(result)
     })
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
