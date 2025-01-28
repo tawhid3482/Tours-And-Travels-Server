@@ -3,6 +3,7 @@ const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 5000;
 
 // middleWare
@@ -12,6 +13,7 @@ app.use(express.json());
 // mongodb url
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { default: Stripe } = require("stripe");
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.s64u1mi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -35,7 +37,9 @@ async function run() {
     const placeCollection = client.db("Traveling").collection("place");
     const reviewsCollection = client.db("Traveling").collection("reviews");
     const galleryCollection = client.db("Traveling").collection("gallery");
-    const orderCollection = client.db("Traveling").collection("order");
+    const reservationCollection = client
+      .db("Traveling")
+      .collection("reservation");
     const paymentCollection = client.db("Traveling").collection("payment");
     // all query here
 
@@ -87,28 +91,24 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/users",verifyToken,verifyAdmin,  async (req, res) => {
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       const result = await userCollection.find().toArray();
       res.send(result);
     });
 
-    app.get(
-      "/users/admin/:email",
-      verifyToken,
-      async (req, res) => {
-        const email = req.params.email;
-        if (email !== req.decoded.email) {
-          return res.status(403).send({ message: "forbidden access" });
-        }
-        const query = { email: email };
-        const user = await userCollection.findOne(query);
-        let admin = false;
-        if (user) {
-          admin = user?.role === "admin";
-        }
-        res.send({ admin });
+    app.get("/users/admin/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: "forbidden access" });
       }
-    );
+      const query = { email: email };
+      const user = await userCollection.findOne(query);
+      let admin = false;
+      if (user) {
+        admin = user?.role === "admin";
+      }
+      res.send({ admin });
+    });
 
     app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
@@ -172,36 +172,31 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/place", async (req, res) => {
+    app.post("/place", verifyToken, verifyAdmin, async (req, res) => {
       const place = req.body;
       const result = await placeCollection.insertOne(place);
       res.send(result);
     });
-    app.delete("/place/:id", async (req, res) => {
+    app.delete("/place/:id", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await placeCollection.deleteOne(query);
       res.send(result);
     });
 
-    app.patch("/place/:id", async (req, res) => {
+    app.patch("/place/:id", verifyToken, verifyAdmin, async (req, res) => {
       const item = req.body;
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const updatedDoc = {
         $set: {
-          name: item.name,
-          oldPrice: item.oldPrice,
-          newPrice: item.newPrice,
-          category: item.category,
+          placeName: item.placeName,
+          price: item.price,
           rating: item.rating,
-          stock: item.stock,
           description: item.description,
-          featured: item.featured,
-          offer: item.offer,
-          stock_quantity: item.stock_quantity,
-          brand: item.brand,
-          unit_of_measure: item.unit_of_measure,
+          email: item.email,
+          location: item.location,
+          serviceCharge: item.serviceCharge,
           img: item.img,
         },
       };
@@ -236,58 +231,109 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/booking",verifyToken, async (req, res) => {
+    app.get("/booking", verifyToken, async (req, res) => {
       const email = req.query.email;
       const query = { email: email };
       const result = await bookingCollection.find(query).toArray();
       res.send(result);
     });
 
-    app.delete("/booking/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await bookingCollection.deleteOne(query);
+    app.delete("/booking/:email", async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      const result = await bookingCollection.deleteMany(query);
       res.send(result);
     });
 
-    // app.delete("/carts", async (req, res) => {
-    //   const email = req.query.email;
-    //   const query = { email: email };
-    //   const result = await bookingCollection.deleteMany(query);
-    //   res.send(result);
-    // });
-
-    app.patch("/booking/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const item = req.body;
-      const updatedDoc = {
-        $set: {
-          guestCount: item.guestCount,
-          price: item.price,
-        },
-      };
-      const result = await bookingCollection.updateOne(query, updatedDoc);
+    app.post("/reservation", verifyToken, async (req, res) => {
+      const reserve = req.body;
+      const result = await reservationCollection.insertOne(reserve);
       res.send(result);
     });
-
-    app.post("/order", async (req, res) => {
-      const orderItem = req.body;
-      const result = await orderCollection.insertOne(orderItem);
+    app.get("/reservation", verifyToken, verifyAdmin, async (req, res) => {
+      const result = await reservationCollection.find().toArray();
       res.send(result);
     });
-    app.get("/order", async (req, res) => {
+    app.get("/reservation", verifyToken, async (req, res) => {
       const email = req.query.email;
       const query = { email: email };
-      const result = await orderCollection.find(query).toArray();
+      const result = await reservationCollection.find(query).toArray();
       res.send(result);
     });
 
-    app.post("/payment", async (req, res) => {
+    app.delete(
+      "/reservation/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await reservationCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
+
+    //payment
+    app.post("/create-payment-intent", verifyToken, async (req, res) => {
+      const { TotalPrice } = req.body;
+      const amount = parseInt(TotalPrice * 100); // Convert to cents
+      // Create a payment intent
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+
+    app.post("/payment", verifyToken, async (req, res) => {
       const info = req.body;
       const result = await paymentCollection.insertOne(info);
       res.send(result);
     });
+
+    app.get("/payment", async (req, res) => {
+      const email = req.query.email; // Correctly access the 'email' query parameter
+      if (email) {
+        const paymentData = await paymentCollection.find({ email }).toArray();
+        return res.json(paymentData);
+      } else {
+        const allPayment = await paymentCollection.find().toArray();
+        return res.json(allPayment);
+      }
+    });
+
+    // stats
+    app.get("/admin-stats", verifyToken, verifyAdmin, async (req, res) => {
+      const user = await userCollection.estimatedDocumentCount();
+      const placeItems = await placeCollection.estimatedDocumentCount();
+      const reservationItems =
+        await reservationCollection.estimatedDocumentCount();
+      const result = await paymentCollection
+        .aggregate([
+          {
+            $group: {
+              _id: null,
+              totalRevenue: {
+                $sum: "$TotalPrice",
+              },
+            },
+          },
+        ])
+        .toArray();
+      const revenue = result.length > 0 ? result[0].totalRevenue : 0;
+
+      res.send({
+        user,
+        placeItems,
+        reservationItems,
+        revenue,
+      });
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
@@ -302,7 +348,7 @@ run().catch(console.dir);
 
 // server running
 app.get("/", (req, res) => {
-  res.send("Grocery-Shop");
+  res.send("Traveling");
 });
 
 app.listen(port, () => {
